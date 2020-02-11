@@ -11,8 +11,15 @@ library(DT)
 
 data = read.table(file = "litterati challenge-65.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
 
+# colors to use for plotting
+blueish = "#0072B2" 
+brownish = "#D55E00"
+
+
+# convert timestamp to timestamp object
 data$litterTimestamp = parse_date_time(data$litterTimestamp, "Ymd HMS", tz = 'America/Chicago')
 
+# Get the generic usernames and replace them with userN
 users = unique(data$username)
 unnamed_users = users[grepl('litterati', users, fixed=TRUE)]
 assigned_names = to_vec(for(index in 1:length(unnamed_users)) paste("user", as.character(index), sep=''))
@@ -20,7 +27,7 @@ old_new_name = hashmap(unnamed_users, assigned_names)
 
 data$username = to_vec(for(user in data$username) if (old_new_name$has_key(user)) old_new_name[[user]] else user)
 
-
+# remove recrods with locations not in range
 lat_outliers = boxplot(data$lat, plot=FALSE)$out
 data = data[-which(data$lat %in% lat_outliers),]
 
@@ -28,36 +35,28 @@ lon_outliers = boxplot(data$lon, plot=FALSE)$out
 data = data[-which(data$lon %in% lon_outliers),]
 
 
+# replace empty tags with untagged
 data$tags[data$tags==''] = "untagged"
+# make tag strings a list of tags
 data$tags = strsplit(data$tags, ",")
+
+# get different tag vectors for finding top 10 and counts
 ALL_TAGS = unlist(data$tags, recursive = TRUE)
 ALL_UNIQUE_TAGS = unique(ALL_TAGS)
 ALL_SINGLE_TAGS = ALL_TAGS[-Vectorize(function(tag) grepl(' ', tag, fixed=TRUE))(ALL_TAGS)]
 ALL_UNIQUE_SINGLE_TAGS = unique(ALL_SINGLE_TAGS)
 
-DAYS = c("Monday", "Tuesday", "Wednesday", 
-         "Thursday", "Friday", "Saturday", "Sunday")
-
-blueish = "#0072B2" 
-brownish = "#D55E00"
-pinkish = "#CC79A7"
-
-data = data %>% mutate(day=weekdays(data$litterTimestamp)) %>%
-  mutate(hour=hour(data$litterTimestamp)) %>%
-  mutate(date=as.Date(data$litterTimestamp))
-
-pickers = data %>% group_by(username) 
-top10PickersDF = (pickers %>% tally() %>% arrange(desc(n)))
-top10Pickers = to_vec(for (row in 1:nrow(top10PickersDF)) paste(top10PickersDF[row, 1], top10PickersDF[row, 2], sep=" => "))
-
+# get tag tallies
 tags = data.frame(tag=ALL_TAGS, stringsAsFactors = FALSE) %>% group_by(tag) 
 top10TagsDF = (tags %>% tally() %>% arrange(desc(n)))
 top10Tags = top10TagsDF$tag
 
+# function to see which rows have the given tag
 tag_in_tags = function(data, tag) {
   to_vec(for(tag_list in data$tags) tag %in% tag_list)
 }
 
+# function to get a count of all tags
 count_tags = function(data){
   counts = hashmap(ALL_UNIQUE_TAGS, integer(length(ALL_UNIQUE_TAGS)))
   for(tag_list in data$tags) {
@@ -68,6 +67,22 @@ count_tags = function(data){
   data.frame(tag=counts$keys(), count=counts$values())
 }
 
+# add some fields for easier parsing/filtering
+data = data %>% mutate(day=weekdays(data$litterTimestamp)) %>%
+  mutate(hour=hour(data$litterTimestamp)) %>%
+  mutate(date=as.Date(data$litterTimestamp))
+
+
+DAYS = c("Monday", "Tuesday", "Wednesday", 
+         "Thursday", "Friday", "Saturday", "Sunday")
+
+# Get top pickers of litter
+pickers = data %>% group_by(username) 
+top10PickersDF = (pickers %>% tally() %>% arrange(desc(n)))
+top10Pickers = to_vec(for (row in 1:nrow(top10PickersDF)) paste(top10PickersDF[row, 1], top10PickersDF[row, 2], sep=" => "))
+
+
+# convert hour from 24 format to Am/PM format
 am_pm = to_vec(for(hour in 0:23) if (hour == 0) "12 AM" else if (hour < 12) paste(hour, " AM") else if (hour == 12) "12 PM" else paste(hour - 12, " PM"))
 am_pm_map = hashmap(0:23, am_pm)
 
@@ -76,6 +91,11 @@ convert_to_am_pm = function(data){
   data$hour = factor(data$hour, levels=am_pm, ordered=TRUE)
   data
 }
+
+
+# Get records from specified time of day
+
+timeOfDay = c("Morning", "Afternoon", "Evening", "Night")
 
 get_time_data = function(data, time_of_day){
   if (time_of_day == "Morning"){
@@ -91,46 +111,50 @@ get_time_data = function(data, time_of_day){
   }
 }
 
+# Days have ordering
 data$day = factor(data$day, levels=DAYS, ordered=TRUE)
 
+# To use in showing hourly litter
 byHour = data %>% group_by(hour)
 byHour$hour = factor(byHour$hour, levels=0:23, ordered=TRUE)
 
 data2019 = data[year(data$date) == 2019,]
 
-
+# html page about this project
 about_page = read_file("about.html")
 
+# icon to display on map for litter locations
 trash_icon <- makeIcon(
   iconUrl = "trash_can.jpg",
   iconWidth = 16, iconHeight = 30,
   iconAnchorX = 10, iconAnchorY = 20
 )
 
+# map to display
 map_object = leaflet()
 map_styles_string = c("Open Street", "National Geographic", "Positron")
 map_styles = hashmap(map_styles_string, c(providers$OpenStreetMap.HOT, providers$Esri.NatGeoWorldMap, providers$CartoDB.Positron))
 
-timeOfDay = c("Morning", "Afternoon", "Evening", "Night")
+
 
 ui = dashboardPage(
   
   dashboardHeader(title = "Litter Picked in Forest Park", titleWidth=450),
   
   dashboardSidebar(
-    box(width=NULL, height=NULL,
+    box(width=NULL, height=NULL, # display total litter
       box(width=NULL, height=NULL, title="Total Litter"
       ),
       box(
         width=NULL, height=NULL, title=paste(nrow(data), " Pieces")
       )
     ),
-    sidebarMenu(
+    sidebarMenu( # tab widgets
       menuItem("Plot View", tabName = "plotView", icon=icon("chart-bar")),
       menuItem("Table View", tabName="tableView", icon=icon("table")),
       menuItem("About", tabName = "about", icon = icon("info-circle"))
     ),
-    fluidRow(
+    fluidRow( # input widgets
       column(12,
              selectInput(inputId="top10Pickers",
                          label="Top Pickers",
@@ -150,7 +174,7 @@ ui = dashboardPage(
   
   dashboardBody(
     tabItems(
-      tabItem(tabName="plotView",
+      tabItem(tabName="plotView", # plot output tab
         fluidRow(
           column(6, plotOutput(outputId="litterByDay")),
           column(6, plotOutput(outputId="litterByTag")),
@@ -159,7 +183,7 @@ ui = dashboardPage(
           column(12, plotOutput(outputId="litterOverYear"))
         ) # end fluidRow
       ), # end tab 1
-      tabItem(tabName="tableView", 
+      tabItem(tabName="tableView", # table output tab
         fluidRow(
           column(4, 
                  box(
@@ -194,7 +218,7 @@ ui = dashboardPage(
 
 server = function(input, output){
   
-
+  # keep track of which is the most recently active input
   last_user = reactiveVal('')
   last_tag = reactiveVal('')
   last_time = reactiveVal('')
@@ -210,9 +234,6 @@ server = function(input, output){
     tme = input$timeOfDay
     time_on(if (tme != last_time()) TRUE else FALSE)
     
-    #user_on()
-    #tag_on()
-    #time_on()
     last_tag(tag)
     last_user(user)
     last_time(tme)
@@ -318,8 +339,6 @@ server = function(input, output){
       total_tag_freq = total_tag_freq %>% mutate(tag_type="Top 10")
       
       grouped_data = rbind(tag_freq, total_tag_freq) %>% group_by(tag_type)
-      
-      # print(grouped_data)
       
       ggplot(data=grouped_data, aes(tag, count, fill=tag_type)) + 
         geom_bar(stat="identity", position=position_dodge(width=0.5)) + xlab("Tag") + ylab("Pieces") + 
