@@ -1,4 +1,8 @@
-# Litterati-Challenge-Visualization
+# [Litterati-Challenge-Visualization](https://skajah.shinyapps.io/Litterati_Challenge_Summary)
+
+An interactive visualization of the litter picked in Forest Park.
+
+
 Source code to visualize litter data + instructions to run 
 
 You should have R and RStudio installed. 
